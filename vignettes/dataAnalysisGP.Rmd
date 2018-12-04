@@ -1,0 +1,642 @@
+---
+title: Analysis of OCT decays
+author: Pascal PERNOT
+date: 2018/12/03
+output: 
+  bookdown::pdf_document2
+citecolor: blue
+linkcolor: blue
+linestretch: 1.1
+fontsize: 11pt
+bibliography: /home/pernot/Bureau/ComputChemUnc/biblio.bib
+---
+
+```{r setup, echo = FALSE, include=FALSE, message=FALSE}
+libs =c('parallel','rstan','inlmisc','FitOCTLib')
+
+for (lib in libs ) {
+  if(!require(lib,character.only = TRUE))
+    install.packages(lib,dependencies=TRUE)
+  library(lib,character.only = TRUE)
+}
+
+# Options ####
+options(mc.cores = parallel::detectCores(), width = 90)
+rstan_options(auto_write = TRUE)
+set.seed(1234) # Initialise la graine du RNG
+
+# Graphical parameters ####
+gPars = list(
+  cols    = inlmisc::GetColors(8),
+  col_tr  = inlmisc::GetColors(8,alpha=0.1), # Light, for spaghetti curves
+  col_tr2 = inlmisc::GetColors(8,alpha=0.4), # Darker, for legends...
+  pty     = 's',
+  mar     = c(3,3,1.6,.2),
+  mgp     = c(2,.75,0),
+  tcl     = -0.5,
+  lwd     = 1,
+  cex     = 1,
+  xlabel  = 'stromal depth (µm)',
+  plot_title = '',
+  graphTable = FALSE
+)
+
+# Control parameters ####
+
+### Default values / Set values here
+ctrlPars = list(
+  depthSel    = NULL, # Otherwise c(xmin,xmax)
+  dataType    = 2,    # Intensity
+  subSample   = 1,
+  smooth_df   = 15,
+  method      = c('sample','optim','vb')[1],
+  nb_warmup   = 100,
+  nb_sample   = 100,
+  modRange    = 0.5,
+  ru_theta    = 0.05,
+  lambda_rate = 0.1,
+  gridType    = 'internal',
+  Nn          = 10,
+  rho_scale   = 0.1,
+  priPost     = TRUE, # Compare prior and posterior pdf ?
+  priorType   = 'abc'
+)
+
+# Expose parameters
+for (n in names(ctrlPars))
+  assign(n,rlist::list.extract(ctrlPars,n))
+
+```
+
+
+
+# Introduction
+
+Analysis of the OCT decays by a mono-exponential decay reveals two
+features which condition our design of a data analysis method:
+an heterogeneous random noise, and medium-scale oscillations 
+around the exponential decay (model inadequacy). 
+To be able to partition unambiguously the model residuals between 
+these two components, we proceed in two steps:
+
+1. estimation and modeling of the random noise component, to be injected in 
+
+2. the estimation of the parameters of the decay model:
+    a. test of a simple monoexponential model
+    b. if the latter fails, use of a modulated decay model
+
+
+# Methods
+
+Considering a set of $N$ measured data points $\pmb D=\{z_i,y_i \}_{i=1, N}$,
+one considers a measurement model with heterogeneous additive noise
+\begin{equation}  
+  y_i = f(z_i) + \epsilon_i 
+(\#eq:1)
+\end{equation}    
+where $f(.)$ is a model function to be defined, and
+\begin{equation}  
+  \epsilon_i \sim Norm(0,\sigma_i) 
+(\#eq:2)
+\end{equation}  
+represents an heterogeneous measurement noise with a normal distribution
+of standard deviation $\sigma_i$.
+
+## Estimation and modeling of the random noise
+
+A cubic smoothing spline function is used to estimate the random 
+part of the signal. 
+The residuals of the smoothing function are assigned 
+to random noise $\epsilon$.
+
+Considering that the OCT decays result from photon counting experiments,
+one can expect that the noise obbeys a Poisson law. 
+In consequence, the standard deviation of the noise is modeled by an exponential decay
+\begin{equation} 
+  \sigma_i = a_1 * \exp\left( -\frac{2*z_i}{a_2} \right) 
+(\#eq:3)
+\end{equation}  
+This shape enables also to account for cases of _in vivo_ measurements
+with nearly uniform noise. 
+
+The parameters are obtained by Bayesian inference [@Gelman2013] from 
+Eqns. 2-3, with uniform priors in the range $]0,a_{max}]$, the upper 
+value being chosen to accommodate a quasi-uniform noise model. 
+
+The posterior pdf is sampled by Markov Chain Monte Carlo in `stan`
+[@Gelman2015] (see below for details of implementation), and the mean
+values are used to define the measurement uncertainty
+\begin{equation} 
+  u_{yi} = \bar{a_1} * \exp\left( -\frac{2*z_i}{\bar{a_2}} \right) 
+(\#eq:4)
+\end{equation}  
+to be used in the next steps, for which one has now a data set 
+augmented with measurement uncertainties $\pmb u_y$, _i.e._ 
+$\pmb D= \{ z_i,y_i, u_{yi} \}_{i=1, N}$.
+
+## Calibration of a decay model
+
+### Mono-exponential decay
+
+The mono-exponential decay curve with parameters 
+$\pmb \vartheta = \{ a,b,l_0 \}$
+\begin{equation} 
+  f( z; \pmb \vartheta) = a + b * \exp\left( -\frac{2*z}{l_0} \right)
+(\#eq:modExp)
+\end{equation}  
+is first fitted to the data by maximization of the posteriot pdf (MAP).
+The likelihood is
+\begin{equation}
+  \pmb y| \pmb \vartheta \sim \exp\left\{ -\frac{1}{2}\ 
+        \chi_w^2(\pmb y; \pmb z, \pmb u_y, \pmb \vartheta) \right\}
+(\#eq:likExp)
+\end{equation}
+where the weighted chi-square function is defined as
+\begin{equation}
+  \chi_w^2(\pmb y; \pmb z, \pmb u_y, \pmb \vartheta) = 
+    \sum_{i=1}^N 
+      \frac{[y_i - f(z_i; \pmb \vartheta )]^2}
+           {u_{yi}^2}
+(\#eq:wChi2)
+\end{equation}
+The parameters have uniform priors on $[0,\infty[$.
+
+#### Validation
+
+The value of the reduced chi-square $\chi_r^2 = \chi_w^2/(N-3)$ should be 
+close to 1, based on the quantiles of the reduced chi-square distribution 
+with $N-3$ degrees of freedom. 
+Moreover, the residuals should not present serial correlation. 
+If these conditions are not met, one has to use a more elaborate model,
+described below.
+
+
+### Modulated decay model
+
+The mono-exponential decay model is improved with a $z$-dependent 
+optical depth $l(z; \pmb \vartheta)$ with parameters $\pmb \vartheta$
+\begin{equation} 
+  f( z; \pmb \vartheta, \pmb \kappa) = a + b * 
+         \exp\left( -\frac{2*z}{l(z; l_0,\pmb \kappa)} \right)
+(\#eq:5)
+\end{equation}  
+where the shape of the optical depth is defined as
+\begin{equation} 
+  l(z; l_0,\pmb \kappa) = l_0*(1+ \delta l(z; \pmb \kappa))
+(\#eq:6)
+\end{equation}
+$\delta l(.)$ is a Gaussian Process (GP) of mean 0, 
+conditioned on $M$ control values 
+$\pmb \kappa= \{\kappa_i\}_{i=1,M}$
+at predefined locations 
+$\hat{\pmb z} = \{\hat z_i\}_{i=1,M}$.
+The mean value of the GP is used here as an interpolator between 
+the control points, and we choose a Gaussian kernel for its 
+smoothness properties
+\begin{equation} 
+C(z, z') = \alpha^2 * \exp\left( -\frac{(z-z')^2}{\rho^2} \right)
+(\#eq:7)
+\end{equation}
+The $\alpha$ and $\rho$ parameters of the GP are fixed *a priori*.
+
+Considering the set of $M$ control values $\pmb \kappa$ for the OD 
+modulation at locations $\hat{\pmb z}$, $\delta l$ can be obtained 
+at any depth as the mean value of the GP:
+\begin{equation} 
+  \delta l(z; \pmb \kappa) = 
+     {\pmb \Omega}^T*{\pmb K}^{-1}*{\pmb \kappa}
+(\#eq:8)
+\end{equation}
+where ${\pmb K}$ is a $M\times M$ covariance matrix with elements 
+$K_{ij} = C(\hat z_i, \hat z_j )$ and ${\pmb \Omega}$ is a $M$-vector 
+with elements $\Omega_i = C(\hat z_i, z )$.
+
+The control points positions, $\hat{\pmb z}$, are chosen *a priori* 
+on a regular grid spanning the experimental depth range. 
+As one does not expect short scale modulations, a small number of 
+points is used, typically $M\simeq 10$. 
+Similarly, for the smoothness of the interpolation, one picks 
+the correlation length of the kernel *a priori*, at a value large 
+enough to avoid undue oscillations between the control points and 
+small enough to avoid excessive rigidity of the model. 
+In the present configuration, a good compromise has been found 
+to be $\rho = 1/M^{th}$ of the total depth range.
+In the same spirit, the variance parameter of the GP is taken as a small
+fraction of the standard deviation of the control values 
+$\alpha = 0.1 * sd(\pmb \kappa)$. 
+This choice of $\alpha$ and $\rho$ has been found to provide a well
+behaved interpolator for test simulated signals. 
+Besides, small changes around these values do not affect 
+significantly the mean prediction of the GP (Eq. 8).
+
+#### Likelihood function
+
+To compensate for defaults in the estimation of the noise, 
+a parameter $\sigma$ is introduced as a multiplicative factor
+of $\pmb u(y)$.
+The unknown parameters are therefore $\pmb \vartheta$, $\pmb \kappa$,
+and $\sigma$.
+The likelihood function is a multivariate Normal distribution
+\begin{equation}
+    \pmb y | \pmb \vartheta, \pmb \kappa , \sigma  \sim 
+      \exp\left\{ -\frac{1}{2} \chi_w^2(\pmb y; \pmb z, \pmb u_y,
+      \pmb \vartheta, \pmb \kappa, \sigma) \right\}
+(\#eq:likMod)
+\end{equation}
+where
+\begin{equation}
+  \chi_w^2(\pmb y; \pmb z, \pmb u_y, \pmb \vartheta, \pmb \kappa, \sigma) = 
+    \sum_{i=1}^N
+    \frac{[y_i - f(z_i; \pmb \vartheta, \pmb \kappa )]^2}
+         {[\sigma * u_{yi}]^2}
+(\#eq:wChi2Mod)
+\end{equation}
+
+#### Prior pdfs
+
+There is a risk of indetermination between $l_0$ and $\pmb \kappa$; 
+for instance, setting all values of $\pmb \kappa$ to 1 would be 
+exactly compensated by halving $l_0$.
+
+One therefore constrains $\pmb \kappa$ to be close to zero
+with a Bayesian Lasso-type prior [@Park2008], in a version 
+based on a hierarchical prior adapted from Ref.[@Mallick2014]:
+\begin{equation}
+  \begin{split}
+    \kappa_i | u_i & \sim Normal(0, s_i); i=1,M \\
+    s_i | \lambda & \sim  Gamma(2, \lambda) ; i=1,M\\
+    \lambda & \sim Gamma(2, \lambda_r)
+  \end{split}
+(\#eq:9)
+\end{equation}
+
+The prior on $\pmb \vartheta$ is a multivariate normal distribution
+$\pi(\pmb\vartheta) = N(\hat{\pmb \vartheta}_1,\pmb \Sigma_\vartheta)$
+centered on the best estimate from the mono-exponential fit, 
+$\hat{\pmb \vartheta}_1$, with a covariance matrix 
+$\pmb \Sigma_\vartheta$ estimated following two options:
+
+1. the covariance matrix is built from the correlation matrix
+   $\pmb C_{\vartheta_1}$ issued from the monoexponential fit, and a 
+   vector of standard deviations specified from relative 
+   uncertainties on the parameters:
+   \begin{equation}
+      \pmb \Sigma_\vartheta = \pmb I(\pmb u_\vartheta) 
+                       * \pmb C_{\vartheta_1} 
+                       * \pmb I(\pmb u_\vartheta)
+   (\#eq:sig1)
+   \end{equation}
+   where $\pmb I(\pmb u_\vartheta)$ is a diagonal matrix with elements
+   $\pmb u_\vartheta = r * \hat{\pmb \vartheta}_1$.
+   The uncertainty factor $r$ is typically chosen as a small percentage,
+   _e.g._, $r = 0.05$.
+   
+2. a _diagonal_ covariance matrix 
+   $\pmb \Sigma_\vartheta = \pmb I(\pmb u_\vartheta^2)$
+   is built from a moments-matching procedure.
+   The standard deviations $\pmb u_\vartheta$ are optimized to 
+   match two criteria:  
+    a. $S_1$, the 2-sigma prediction uncertainty of the mono-exponential
+       model has to match $Q_{95}$, the $95^{th}$ quantile of the absolute 
+       errors of the mono-exponential model (all statistics are weighted 
+       by $\pmb u_y$) [@Pernot2018];   
+    b. the standard deviation of the prediction uncertainty has to 
+       be as small as possible.  
+    The first criterion ensures that the mean prediction uncertainty of
+    the mono-exponential model is in agreement with the amplitude of
+    the model's residuals. This criterion can typically be matched by 
+    an infinity of solutions, and the second one selects those parameters
+    which provides the 'flatest' prediction band. 
+    The optimization is done by sampling the posterior pdf of the
+    parameters  $\pmb u_\vartheta$ with uniform priors on $[0,\infty[$,
+    and a likelihood function
+    \begin{equation}
+      S_1 ,S_2 | \pmb u_\vartheta \sim 
+        \exp\left\{ 
+          -\frac{1}{2}\frac{(S_1 - Q_{95})^2 + S_2^2}
+                           {\varepsilon^2} 
+          \right\}
+    (\#eq:likMM)
+    \end{equation}
+    where $S_1 = 1.96*\sqrt{<\pmb u_p^2/\pmb u_y^2>}$, $\pmb u_p$ is the
+    prediction uncertainty of the mono-exponential model estimated 
+    by linear uncertainty propagation [@GUM], 
+    $Q_{95}$ is the the $95^{th}$ quantile of the absolute weighted 
+    residuals
+    $|\left\{\pmb y - f(\pmb z;\pmb \vartheta)\right\} / \pmb u_y|$,
+    $S_2 = {\rm sd}(\pmb u_p / \pmb u_y)$
+    and $\varepsilon$ is a predefined precision factor.
+  
+The prior on $\sigma$ is a normal distribution, centered on 1, 
+with standard deviation 0.1.
+
+#### Validation
+
+The quality of the fit can be estimated by inspection of
+the residuals which should not present serial correlations 
+and should conform with the random experimental noise. 
+
+The value of the reduced chi-square $\chi_r^2 = \chi_w^2/(N-\nu)$, 
+where $\nu$ is the number of effective free parameters, should be 
+close to 1. One has $\nu = 5 + \hat M$, where $\hat M$ is the number of 
+control values significantly different from zero, _i.e._ those
+for which 0 lies outside of a high posterior probability interval.
+One typically considers a 0.9 probability interval.
+
+Posterior predictive samples are also generated and plotted 
+with the reference data to confirm the quality of the fit.
+
+# Implementation
+
+__Algorithm__
+
+1. Noise estimation
+    i. Perform a smoothing of data and extract residuals $\pmb R$  
+    ii. Fit residuals by a normal distribution with exponentially 
+       decreasing amplitude
+
+2. Mono-exponential fit
+
+3. Modulated exponential fit
+
+
+Estimation of the random errors is done with the `smooth.spline` from 
+`R` [@RCoreTeam]; A satisfying degree of smoothing for all examples
+considered here was obtained by setting the smoothing `df` parameter 
+to 15.
+
+The Bayesian models are implemented in `stan` [@Gelman2015], using the
+`rstan` interface package [@Rstan] for `R` [@RCoreTeam]. 
+`Stan` is a very flexible and efficient probabilistic programming 
+language to implement Bayesian statistical models. 
+The No-U-Turn sampler [@Hoffman2014] was used for this study.
+
+The main outputs of the stan codes are samples of the posterior pdf of
+the parameters, from which statistics and plots can be generated in R.
+Convergence of the sampling is assessed by examining the traces of
+parameters samples and the 'split Rhat' statistics provided by rstan. In
+the present application, the Markov chains converge rapidly, and all
+models are run with four parallel Markov Chains of 1500 iterations each,
+1000 of which are used as warm-up for the No-U-Turn sampler and
+dispatched. The convergence criteria and parameters statistics are
+therefore estimated on a sample of 2000 points.
+
+# Example(s)
+
+## In-vivo signal
+
+```{r getData, echo = FALSE, cache = TRUE}
+dataDir = c("DataWl","Data1","DataSynth")[2]
+dataSet = (list.dirs(path=paste0('../',dataDir),full.names = FALSE)[-1])[4]
+
+D = read.csv(paste0('../',dataDir,'/',dataSet,'/Courbe.csv'))
+    C = FitOCTLib::selX(D[,1],D[,2],depthSel,subSample)
+    x = C$x; y = C$y
+```
+
+## Estimate noise
+
+A fit of the residuals of  smoothing splines provides the parameters for a model of the random noise.
+
+```{r estimNoise, echo = FALSE, results='hold'}
+### Estimate data uncertainty
+fits = FitOCTLib::estimateNoise(x, y, df = smooth_df)
+uy   = fits$uy      # Used by next stages
+ySpl = fits$ySmooth # Used by plotMonoExp
+
+cat('\n Noise fit parameters:\n')
+a = fits$theta
+for(i in 1:length(a))
+  cat(paste0('a_',i,' : '),signif(a[i],3),'\n')
+```
+
+The smoothing curve, residuals and noise model can be seen in Fig. \@ref(fig:plotNoise). In thsi example, the noise is homogeneous, 
+and the exponential model tends to a constant.
+
+```{r plotNoise, echo = FALSE, fig.cap='Splines smoothing and noise estimation'}
+gPars$plot_title = 'Noise estimation'
+FitOCTLib::plotNoise(x, y, uy, ySpl, gPars, dataType)
+gPars$plot_title = ''
+```
+
+## Mono-exponential fit
+
+A mono-exponential fit is attempted using the noise model.
+
+```{r fitMono, include =FALSE}
+fitm   = FitOCTLib::fitMonoExp(x, y, uy, dataType = dataType)
+theta0    = fitm$best.theta   # Used by next stage
+cor.theta = fitm$cor.theta
+```
+
+The Birge ratio analysis rejects this model
+
+```{r fitMonoOut, echo = FALSE, results='hold'}
+opt = theta0
+cat('\n MonoExp decay parameters:\n')
+for(i in 1:length(opt))
+  cat(paste0('b_',i,' : '),signif(opt[i],3),'\n')
+cat('\n\n')
+
+# Probability Interval for Birge's ratio
+br = FitOCTLib::printBr(fitm$fit)
+```
+
+It can be seen in Fig. \@ref(fig:plotMono) that the residuals present notable serial correlation.
+
+```{r plotMono, echo = FALSE, fig.cap='Mono-exponential fit and residuals.'}
+fit     = fitm$fit
+resid   = fit$par$resid
+mod     = fit$par$m
+gPars$plot_title = 'Mono-exponential fit'
+FitOCTLib::plotMonoExp(x, y, uy, ySpl, mod, resid,
+                       gPars, dataType, br)
+gPars$plot_title = ''
+```
+
+## Modulated-exponential fit
+
+Considering that the mono-exponential is deemed inadequate, the
+model with mean-depts modulation is fit to the data.
+The default parameters are used, notably with a number of control
+points $M=10$. 
+
+### Prior sampling
+
+```{r priGP, include=FALSE, cache=TRUE, dependson='getData'}
+# Prior on exponential params
+priExp = FitOCTLib::estimateExpPrior(
+  x, uy, dataType, priorType,
+  out = fitm, ru_theta = ru_theta,
+  eps = 1e-3
+)
+
+# Posterior Distribution
+priGP = FitOCTLib::fitExpGP(
+  x, y, uy,
+  dataType      = dataType,
+  Nn            = Nn,
+  gridType      = gridType,
+  method        = method,
+  theta0        = priExp$theta0,
+  Sigma0        = priExp$Sigma0,
+  lambda_rate   = lambda_rate,
+  rho_scale     = ifelse(rho_scale==0, 1./Nn, rho_scale),
+  nb_warmup     = nb_warmup,
+  nb_iter       = nb_warmup + nb_sample,
+  prior_PD      = 1,
+  open_progress = FALSE
+)
+```
+
+
+The moments-matching prior is used for the exponential parameters,
+and one can check the dispersion of the exponential curves generated 
+from this prior (prior predictive sampling) in Fig. \@ref(fig:plotPriGP).
+Prior probability intervals for the control values are also shown in
+this figure (right panel).
+
+```{r plotPriGP, echo = FALSE, fig.cap='Samples from prior pdf.'}
+gPars$plot_title = 'Prior exponential'
+FitOCTLib::plotExpGP(
+  x, y, uy, ySpl, out=priGP, modScale=modRange*4, gPars=gPars,
+  dataType = dataType, br = br
+)
+gPars$plot_title = ' '
+```
+
+### Posterior sampling
+
+The priors pdf seems correct, and one can now draw samples from 
+the posterior pdf.
+
+```{r fitGP, include=FALSE, cache=TRUE, dependson='getData'}
+# Posterior Distribution
+fitGP = FitOCTLib::fitExpGP(
+  x, y, uy,
+  dataType      = dataType,
+  Nn            = Nn,
+  gridType      = gridType,
+  method        = method,
+  theta0        = priExp$theta0,
+  Sigma0        = priExp$Sigma0,
+  lambda_rate   = lambda_rate,
+  rho_scale     = ifelse(rho_scale==0, 1./Nn, rho_scale),
+  nb_warmup     = nb_warmup,
+  nb_iter       = nb_warmup + nb_sample,
+  prior_PD      = 0,
+  open_progress = FALSE
+)
+```
+
+The Birge ratio analysis invalidates this model.
+
+```{r fitGPOut, echo = FALSE, results ='hold', message= FALSE}
+if(fitGP$prior_PD == 0) {
+  # cat('\n ExpGP parameters:\n')
+  fit = fitGP$fit
+  # if(fitGP$method == 'sample' | fitGP$method == 'vb') {
+  #   pars = c('theta','yGP','lambda','sigma','br')
+  #   print(fit,pars=pars)
+  #   br = mean(rstan::extract(fit,'br')[[1]])
+  # } else {
+  #   cat('theta  :',fit$par$theta,'\n')
+  #   cat('yGP    :',fit$par$yGP,'\n')
+  #   cat('lambda :',fit$par$lambda,'\n')
+  #   cat('sigma  :',fit$par$sigma,'\n')
+  #   cat('br     :',br<-fit$par$br,'\n')
+  # }
+  # cat('\n\n')
+  
+  # Probability Interval for Birge's ratio
+  br = FitOCTLib::printBr(fit)
+}
+```
+
+As can be seen in Fig. \@ref(fig:plotGP), the residuals have not been
+notably improved from the mono-exponential model, and the present design
+does not enable to fit a sharp rise in the OCT signal at a depth of about
+$400\, \mu\rm{m}$. An option is to increase the number of control points.
+
+```{r plotGP, echo = FALSE, fig.height=7, fig.cap='Modulated-exponential fit, residuals, Modulation function and Normal QQ-plot of residuals.'}
+gPars$cex = 1
+gPars$plot_title = 'Modulated exp. fit'
+FitOCTLib::plotExpGP(
+  x, y, uy, ySpl, out=fitGP, modScale=modRange, gPars=gPars,
+  dataType = dataType, br = br
+)
+gPars$plot_title = ' '
+```
+
+### Add control points
+
+```{r include=FALSE}
+Nn = 15
+```
+
+
+```{r fitGP2, include=FALSE, cache=TRUE, dependson='getData'}
+# Posterior Distribution
+fitGP2 = FitOCTLib::fitExpGP(
+  x, y, uy,
+  dataType      = dataType,
+  Nn            = Nn,
+  gridType      = gridType,
+  method        = method,
+  theta0        = priExp$theta0,
+  Sigma0        = priExp$Sigma0,
+  lambda_rate   = lambda_rate,
+  rho_scale     = ifelse(rho_scale==0, 1./Nn, rho_scale),
+  nb_warmup     = nb_warmup,
+  nb_iter       = nb_warmup + nb_sample,
+  prior_PD      = 0,
+  open_progress = FALSE
+)
+```
+
+The number of control points has been raised to $M = `r Nn` $, 
+and the posterior distribution has been resampled. 
+The Birge ratio is now acceptable
+
+```{r fitGPOut2, echo = FALSE, results ='hold', message= FALSE}
+if(fitGP2$prior_PD == 0) {
+  # cat('\n ExpGP parameters:\n')
+  fit = fitGP2$fit
+  # if(fitGP$method == 'sample' | fitGP$method == 'vb') {
+  #   pars = c('theta','yGP','lambda','sigma','br')
+  #   print(fit,pars=pars)
+  #   br = mean(rstan::extract(fit,'br')[[1]])
+  # } else {
+  #   cat('theta  :',fit$par$theta,'\n')
+  #   cat('yGP    :',fit$par$yGP,'\n')
+  #   cat('lambda :',fit$par$lambda,'\n')
+  #   cat('sigma  :',fit$par$sigma,'\n')
+  #   cat('br     :',br<-fit$par$br,'\n')
+  # }
+  # cat('\n\n')
+  
+  # Probability Interval for Birge's ratio
+  br = FitOCTLib::printBr(fit)
+}
+```
+
+and the residuals are considerably improved (Fig. \@ref(fig:plotGP2)).
+The model is statistically valid, and the modulation curve can be used 
+for physical interpretation.
+
+```{r plotGP2, echo = FALSE, fig.height=7, fig.cap='Modulated-exponential fit, residuals, Modulation function and Normal QQ-plot of residuals.'}
+gPars$cex = 1
+gPars$plot_title = 'Modulated exp. fit'
+FitOCTLib::plotExpGP(
+  x, y, uy, ySpl, out=fitGP2, modScale=modRange, gPars=gPars,
+  dataType = dataType, br = br
+)
+gPars$plot_title = ' '
+```
+
+
+
+
+
+# References
+
