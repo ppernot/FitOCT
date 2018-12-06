@@ -72,12 +72,13 @@ for (n in names(ctrlPars))
 
 # Introduction
 
-Analysis of the OCT decays by a mono-exponential decay reveals two
-features which condition our design of a data analysis method:
-an heterogeneous random noise, and medium-scale oscillations 
-around the exponential decay (model inadequacy). 
-To be able to partition unambiguously the model residuals between 
-these two components, we proceed in two steps:
+Analysis of  OCT signals by a mono-exponential decay reveals two
+features which condition the proposed data analysis method:
+an heterogeneous random noise Poisson-like), and medium-scale
+oscillations around the exponential decay 
+(model inadequacy; see Fig. \@ref{fig:plotMono}). 
+To be able to partition unambiguously the model residuals 
+between these two components, we proceed in two steps:
 
 1. estimation and modeling of the random noise component, to be injected in 
 
@@ -88,7 +89,7 @@ these two components, we proceed in two steps:
 
 # Methods
 
-Considering a set of $N$ measured data points $\pmb D=\{z_i,y_i \}_{i=1, N}$,
+Considering a set of $N$ measured data points $\pmb D=\{z_i,y_i \}_{i=1}^N$,
 one considers a measurement model with heterogeneous additive noise
 \begin{equation}  
   y_i = f(z_i) + \epsilon_i 
@@ -111,7 +112,8 @@ to random noise $\epsilon$.
 
 Considering that the OCT decays result from photon counting experiments,
 one can expect that the noise obbeys a Poisson law. 
-In consequence, the standard deviation of the noise is modeled by an exponential decay
+In consequence, the standard deviation of the noise is modeled by an 
+exponential decay
 \begin{equation} 
   \sigma_i = a_1 * \exp\left( -\frac{2*z_i}{a_2} \right) 
 (\#eq:3)
@@ -144,7 +146,7 @@ $\pmb \vartheta = \{ a,b,l_0 \}$
   f( z; \pmb \vartheta) = a + b * \exp\left( -\frac{2*z}{l_0} \right)
 (\#eq:modExp)
 \end{equation}  
-is first fitted to the data by maximization of the posteriot pdf (MAP).
+is first fitted to the data by maximization of the posterior pdf (MAP).
 The likelihood is
 \begin{equation}
   \pmb y| \pmb \vartheta \sim \exp\left\{ -\frac{1}{2}\ 
@@ -164,17 +166,17 @@ The parameters have uniform priors on $[0,\infty[$.
 #### Validation
 
 The value of the reduced chi-square $\chi_r^2 = \chi_w^2/(N-3)$ should be 
-close to 1, based on the quantiles of the reduced chi-square distribution 
-with $N-3$ degrees of freedom. 
+close to 1 ($\chi_r^2 \in IQ_{95}$), based on the quantiles of the reduced
+chi-square distribution with $N-3$ degrees of freedom. 
 Moreover, the residuals should not present serial correlation. 
-If these conditions are not met, one has to use a more elaborate model,
-described below.
+If these conditions are not met, one has to use the more elaborate 
+model, described below.
 
 
 ### Modulated decay model
 
 The mono-exponential decay model is improved with a $z$-dependent 
-optical depth $l(z; \pmb \vartheta)$ with parameters $\pmb \vartheta$
+optical depth $l(z; l_0, \pmb \kappa)$
 \begin{equation} 
   f( z; \pmb \vartheta, \pmb \kappa) = a + b * 
          \exp\left( -\frac{2*z}{l(z; l_0,\pmb \kappa)} \right)
@@ -185,11 +187,11 @@ where the shape of the optical depth is defined as
   l(z; l_0,\pmb \kappa) = l_0*(1+ \delta l(z; \pmb \kappa))
 (\#eq:6)
 \end{equation}
-$\delta l(.)$ is a Gaussian Process (GP) of mean 0, 
-conditioned on $M$ control values 
-$\pmb \kappa= \{\kappa_i\}_{i=1,M}$
+$\delta l(.)$, _the lodulation function_, is a Gaussian Process (GP) 
+of mean 0,conditioned on $M$ control values 
+$\pmb \kappa= \{\kappa_i\}_{i=1}^M$
 at predefined locations 
-$\hat{\pmb z} = \{\hat z_i\}_{i=1,M}$.
+$\hat{\pmb z} = \{\hat z_i\}_{i=1}^M$.
 The mean value of the GP is used here as an interpolator between 
 the control points, and we choose a Gaussian kernel for its 
 smoothness properties
@@ -254,10 +256,10 @@ where
 
 #### Prior pdfs
 
-There is a risk of indetermination between $l_0$ and $\pmb \kappa$; 
+$\pmb\kappa$. The definition of the modulation function is a source
+of indetermination between $l_0$ and $\pmb \kappa$; 
 for instance, setting all values of $\pmb \kappa$ to 1 would be 
 exactly compensated by halving $l_0$.
-
 One therefore constrains $\pmb \kappa$ to be close to zero
 with a Bayesian Lasso-type prior [@Park2008], in a version 
 based on a hierarchical prior adapted from Ref.[@Mallick2014]:
@@ -269,12 +271,21 @@ based on a hierarchical prior adapted from Ref.[@Mallick2014]:
   \end{split}
 (\#eq:9)
 \end{equation}
+whete $\lambda_r$ is chosen _a priori_. I defines the scale of 
+expected deviations from zero of $\pmb\kappa$ (typically $\lambda_r=0.1$).
 
-The prior on $\pmb \vartheta$ is a multivariate normal distribution
+$\pmb\vartheta$. The prior on $\pmb \vartheta$ is a multivariate 
+normal distribution
 $\pi(\pmb\vartheta) = N(\hat{\pmb \vartheta}_1,\pmb \Sigma_\vartheta)$
 centered on the best estimate from the mono-exponential fit, 
 $\hat{\pmb \vartheta}_1$, with a covariance matrix 
-$\pmb \Sigma_\vartheta$ estimated following two options:
+$\pmb\Sigma_\vartheta$. 
+Because the present model is used when the mono-exponential decay
+is inadequate, one cannot rely directly on the covariance matrix
+extracted from its calibration, $\pmb\Sigma_{\vartheta_1}$.
+Instead, a covariance matrix is estimated to cover the range
+ov variations of the mono-exponential residuals [@Pernot2017b], 
+following two approaches:
 
 1. the covariance matrix is built from the correlation matrix
    $\pmb C_{\vartheta_1}$ issued from the monoexponential fit, and a 
@@ -287,13 +298,13 @@ $\pmb \Sigma_\vartheta$ estimated following two options:
    (\#eq:sig1)
    \end{equation}
    where $\pmb I(\pmb u_\vartheta)$ is a diagonal matrix with elements
-   $\pmb u_\vartheta = r * \hat{\pmb \vartheta}_1$.
+   $\pmb u_\vartheta = r * \hat{\pmb\vartheta}_1$.
    The uncertainty factor $r$ is typically chosen as a small percentage,
    _e.g._, $r = 0.05$.
    
 2. a _diagonal_ covariance matrix 
-   $\pmb \Sigma_\vartheta = \pmb I(\pmb u_\vartheta^2)$
-   is built from a moments-matching procedure.
+   $\pmb\Sigma_\vartheta = \pmb I(\pmb u_\vartheta^2)$
+   is built by a moments-matching procedure.
    The standard deviations $\pmb u_\vartheta$ are optimized to 
    match two criteria:  
     a. $S_1$, the 2-sigma prediction uncertainty of the mono-exponential
@@ -301,10 +312,12 @@ $\pmb \Sigma_\vartheta$ estimated following two options:
        errors of the mono-exponential model (all statistics are weighted 
        by $\pmb u_y$) [@Pernot2018];   
     b. the standard deviation of the prediction uncertainty has to 
-       be as small as possible.  
+       be as small as possible.
+    
     The first criterion ensures that the mean prediction uncertainty of
     the mono-exponential model is in agreement with the amplitude of
-    the model's residuals. This criterion can typically be matched by 
+    the model's residuals [@Pernot2017b]. 
+    This criterion can typically be matched by 
     an infinity of solutions, and the second one selects those parameters
     which provides the 'flatest' prediction band. 
     The optimization is done by sampling the posterior pdf of the
@@ -325,10 +338,13 @@ $\pmb \Sigma_\vartheta$ estimated following two options:
     residuals
     $|\left\{\pmb y - f(\pmb z;\pmb \vartheta)\right\} / \pmb u_y|$,
     $S_2 = {\rm sd}(\pmb u_p / \pmb u_y)$
-    and $\varepsilon$ is a predefined precision factor.
+    and $\varepsilon$ is a predefined precision factor ($\varepsilon=10^{-3}$).
   
-The prior on $\sigma$ is a normal distribution, centered on 1, 
+$\sigma$. The prior on $\sigma$ is a normal distribution, centered on 1, 
 with standard deviation 0.1.
+
+The parameters to be sampled are therefore $\pmb\vartheta$, $\pmb\kappa$,
+$\lambda$ and $\sigma$.
 
 #### Validation
 
@@ -338,10 +354,9 @@ and should conform with the random experimental noise.
 
 The value of the reduced chi-square $\chi_r^2 = \chi_w^2/(N-\nu)$, 
 where $\nu$ is the number of effective free parameters, should be 
-close to 1. One has $\nu = 5 + \hat M$, where $\hat M$ is the number of 
-control values significantly different from zero, _i.e._ those
-for which 0 lies outside of a high posterior probability interval.
-One typically considers a 0.9 probability interval.
+close to 1. One has $\nu = 5 + \hat M$, where $0\le \hat M\le M$ 
+is the number of control values significantly different from zero, 
+_i.e._ those for which $0 \notin IQ_{90}(\kappa_i)$.
 
 Posterior predictive samples are also generated and plotted 
 with the reference data to confirm the quality of the fit.
@@ -394,7 +409,7 @@ D = read.csv(paste0('../',dataDir,'/',dataSet,'/Courbe.csv'))
     x = C$x; y = C$y
 ```
 
-## Estimate noise
+### Estimate noise
 
 A fit of the residuals of  smoothing splines provides the parameters for a model of the random noise.
 
@@ -419,7 +434,7 @@ FitOCTLib::plotNoise(x, y, uy, ySpl, gPars, dataType)
 gPars$plot_title = ''
 ```
 
-## Mono-exponential fit
+### Mono-exponential fit
 
 A mono-exponential fit is attempted using the noise model.
 
@@ -454,14 +469,14 @@ FitOCTLib::plotMonoExp(x, y, uy, ySpl, mod, resid,
 gPars$plot_title = ''
 ```
 
-## Modulated-exponential fit
+### Modulated-exponential fit
 
 Considering that the mono-exponential is deemed inadequate, the
 model with mean-depts modulation is fit to the data.
 The default parameters are used, notably with a number of control
 points $M=10$. 
 
-### Prior sampling
+#### Prior sampling
 
 ```{r priGP, include=FALSE, cache=TRUE, dependson='getData'}
 # Prior on exponential params
@@ -505,7 +520,7 @@ FitOCTLib::plotExpGP(
 gPars$plot_title = ' '
 ```
 
-### Posterior sampling
+#### Posterior sampling
 
 The priors pdf seems correct, and one can now draw samples from 
 the posterior pdf.
@@ -572,6 +587,7 @@ gPars$plot_title = ' '
 
 ```{r include=FALSE}
 Nn = 15
+gridType='extremal'
 ```
 
 
@@ -594,33 +610,26 @@ fitGP2 = FitOCTLib::fitExpGP(
 )
 ```
 
-The number of control points has been raised to $M = `r Nn` $, 
+The number of control points has been raised to _M_=`r Nn` 
+on a grid covering the extremities of the depts range, 
 and the posterior distribution has been resampled. 
-The Birge ratio is now acceptable
 
 ```{r fitGPOut2, echo = FALSE, results ='hold', message= FALSE}
 if(fitGP2$prior_PD == 0) {
-  # cat('\n ExpGP parameters:\n')
+  cat('\n ExpGP parameters:\n')
   fit = fitGP2$fit
-  # if(fitGP$method == 'sample' | fitGP$method == 'vb') {
-  #   pars = c('theta','yGP','lambda','sigma','br')
-  #   print(fit,pars=pars)
-  #   br = mean(rstan::extract(fit,'br')[[1]])
-  # } else {
-  #   cat('theta  :',fit$par$theta,'\n')
-  #   cat('yGP    :',fit$par$yGP,'\n')
-  #   cat('lambda :',fit$par$lambda,'\n')
-  #   cat('sigma  :',fit$par$sigma,'\n')
-  #   cat('br     :',br<-fit$par$br,'\n')
-  # }
-  # cat('\n\n')
-  
+  pars = c('theta','yGP','lambda','sigma','br')
+  print(fit,pars=pars)
+  cat('\n\n')
   # Probability Interval for Birge's ratio
   br = FitOCTLib::printBr(fit)
 }
 ```
 
-and the residuals are considerably improved (Fig. \@ref(fig:plotGP2)).
+The Birge ratio is now acceptable, although there are only 3 
+active control points. 
+The others do not contribute significantly to the fit.
+The residuals are also improved (Fig. \@ref(fig:plotGP2)).
 The model is statistically valid, and the modulation curve can be used 
 for physical interpretation.
 
