@@ -1,0 +1,508 @@
+---
+title: Analysis of OCT decays
+author: Pascal PERNOT
+date: "`r Sys.Date()`"
+output:
+  bookdown::pdf_document2
+citecolor: blue
+linkcolor: blue
+linestretch: 1.1
+fontsize: 12pt
+bibliography: /home/pernot/Bureau/ComputChemUnc/biblio.bib
+---
+
+```{r setup, echo = FALSE, include=FALSE, message=FALSE}
+libs =c('parallel','rstan','inlmisc','FitOCTLib')
+
+for (lib in libs ) {
+  if(!require(lib,character.only = TRUE))
+    install.packages(lib,dependencies=TRUE)
+  library(lib,character.only = TRUE)
+}
+
+# Options ####
+options(mc.cores = parallel::detectCores(), width = 90)
+rstan::rstan_options(auto_write = TRUE)
+set.seed(1234) # Initialise la graine du RNG
+
+# Graphical parameters ####
+gPars = list(
+  cols    = inlmisc::GetColors(8),
+  col_tr  = inlmisc::GetColors(8,alpha=0.1), # Light, for spaghetti curves
+  col_tr2 = inlmisc::GetColors(8,alpha=0.4), # Darker, for legends...
+  pty     = 's',
+  mar     = c(3,3,1.6,.2),
+  mgp     = c(2,.75,0),
+  tcl     = -0.5,
+  lwd     = 1,
+  cex     = 1,
+  cex.leg = 0.8,
+  xlabel  = 'stromal depth (µm)',
+  plot_title = '',
+  graphTable = FALSE
+)
+
+# Control parameters ####
+
+### Default values / Set values here
+ctrlPars = list(
+  depthSel    = NULL, # Otherwise c(xmin,xmax)
+  dataType    = 2,    # Intensity
+  subSample   = 1,
+  smooth_df   = 15,
+  method      = c('sample','optim','vb')[1],
+  nb_warmup   = 100,
+  nb_sample   = 100,
+  modRange    = 0.5,
+  ru_theta    = 0.05,
+  lambda_rate = 0.1,
+  gridType    = 'internal',
+  Nn          = 10,
+  rho_scale   = 0.,
+  priPost     = TRUE, # Compare prior and posterior pdf ?
+  priorType   = 'abc'
+)
+
+# Expose parameters
+for (n in names(ctrlPars))
+  assign(n,rlist::list.extract(ctrlPars,n))
+
+```
+
+
+# Examples
+
+## OCT signal
+
+```{r getData1, echo = FALSE, cache = TRUE}
+dataDir = c("DataWl","Data1","DataSynth")[2]
+dataSet = (list.dirs(path=paste0('../',dataDir),full.names = FALSE)[-1])[1]
+
+D = read.csv(paste0('../',dataDir,'/',dataSet,'/Courbe.csv'))
+C = FitOCTLib::selX(D[,1],D[,2],depthSel,subSample)
+x = C$x; y = C$y
+```
+
+### Estimate noise
+
+A fit of the residuals of  smoothing splines provides the parameters for a model of the random noise.
+
+```{r estimNoise1, echo = FALSE, results='hold'}
+### Estimate data uncertainty
+fits = FitOCTLib::estimateNoise(x, y, df = smooth_df)
+uy   = fits$uy      # Used by next stages
+ySpl = fits$ySmooth # Used by plotMonoExp
+
+cat('\n Noise fit parameters:\n')
+a = fits$theta
+for(i in 1:length(a))
+  cat(paste0('a_',i,' : '),signif(a[i],3),'\n')
+```
+
+The smoothing curve, residuals and noise model can be seen in Fig. \@ref(fig:plotNoise1). The noise presents a notable exponential decay.
+
+```{r plotNoise1, echo = FALSE, fig.cap='Splines smoothing and noise estimation'}
+gPars$plot_title = 'Noise estimation'
+FitOCTLib::plotNoise(x, y, uy, ySpl, gPars, dataType)
+gPars$plot_title = ''
+```
+
+### Mono-exponential fit
+
+A mono-exponential fit is attempted using the noise model.
+
+```{r fitMono1, include =FALSE}
+fitm   = FitOCTLib::fitMonoExp(x, y, uy, dataType = dataType)
+theta0    = fitm$best.theta   # Used by next stage
+cor.theta = fitm$cor.theta
+```
+
+The Birge ratio analysis rejects this model
+
+```{r fitMonoOut1, echo = FALSE, results='hold'}
+opt = theta0
+cat('\n MonoExp decay parameters:\n')
+for(i in 1:length(opt))
+  cat(paste0('b_',i,' : '),signif(opt[i],3),'\n')
+cat('\n\n')
+
+# Probability Interval for Birge's ratio
+br = FitOCTLib::printBr(fitm$fit)
+```
+
+It can be seen in Fig. \@ref(fig:plotMono1) that the residuals present notable serial correlation.
+
+```{r plotMono1, echo = FALSE, fig.cap='Mono-exponential fit and residuals.'}
+fit     = fitm$fit
+resid   = fit$par$resid
+mod     = fit$par$m
+gPars$plot_title = 'Mono-exponential fit'
+FitOCTLib::plotMonoExp(x, y, uy, ySpl, mod, resid,
+                       gPars, dataType, br)
+gPars$plot_title = ''
+```
+
+### Modulated-exponential fit
+
+Considering that the mono-exponential is deemed inadequate, the
+model with mean-depts modulation is fit to the data.
+The default parameters are used, notably with a number of control
+points $M=10$. 
+
+#### Prior sampling
+
+```{r priGP1, include=FALSE, cache=TRUE, dependson='getData1'}
+# Prior on exponential params
+priExp = FitOCTLib::estimateExpPrior(
+  x, uy, dataType, priorType,
+  out = fitm, ru_theta = ru_theta,
+  eps = 1e-3
+)
+
+# Posterior Distribution
+priGP = FitOCTLib::fitExpGP(
+  x, y, uy,
+  dataType      = dataType,
+  Nn            = Nn,
+  gridType      = gridType,
+  method        = method,
+  theta0        = priExp$theta0,
+  Sigma0        = priExp$Sigma0,
+  lambda_rate   = lambda_rate,
+  rho_scale     = ifelse(rho_scale==0, 1./Nn, rho_scale),
+  nb_warmup     = nb_warmup,
+  nb_iter       = nb_warmup + nb_sample,
+  prior_PD      = 1,
+  open_progress = FALSE
+)
+```
+
+
+The moments-matching prior is used for the exponential parameters,
+and one can check the dispersion of the exponential curves generated 
+from this prior (prior predictive sampling) in Fig. \@ref(fig:plotPriGP1).
+Prior probability intervals for the control values are also shown in
+this figure (right panel).
+
+```{r plotPriGP1, echo = FALSE, fig.cap='Samples from prior pdf.'}
+gPars$plot_title = 'Prior exponential'
+FitOCTLib::plotExpGP(
+  x, y, uy, ySpl, out=priGP, modScale=modRange*4, gPars=gPars,
+  dataType = dataType, br = br
+)
+gPars$plot_title = ' '
+```
+
+#### Posterior sampling
+
+The priors pdf seems correct, and one can now draw samples from 
+the posterior pdf.
+
+```{r fitGP1, include=FALSE, cache=TRUE, dependson='getData1'}
+# Posterior Distribution
+fitGP = FitOCTLib::fitExpGP(
+  x, y, uy,
+  dataType      = dataType,
+  Nn            = Nn,
+  gridType      = gridType,
+  method        = method,
+  theta0        = priExp$theta0,
+  Sigma0        = priExp$Sigma0,
+  lambda_rate   = lambda_rate,
+  rho_scale     = ifelse(rho_scale==0, 1./Nn, rho_scale),
+  nb_warmup     = nb_warmup,
+  nb_iter       = nb_warmup + nb_sample,
+  prior_PD      = 0,
+  open_progress = FALSE
+)
+```
+
+The Birge ratio analysis validates this model.
+
+```{r fitGPOut1, echo = FALSE, results ='hold', message= FALSE}
+if(fitGP$prior_PD == 0) {
+  # cat('\n ExpGP parameters:\n')
+  fit = fitGP$fit
+  # if(fitGP$method == 'sample' | fitGP$method == 'vb') {
+  #   pars = c('theta','yGP','lambda','sigma','br')
+  #   print(fit,pars=pars)
+  #   br = mean(rstan::extract(fit,'br')[[1]])
+  # } else {
+  #   cat('theta  :',fit$par$theta,'\n')
+  #   cat('yGP    :',fit$par$yGP,'\n')
+  #   cat('lambda :',fit$par$lambda,'\n')
+  #   cat('sigma  :',fit$par$sigma,'\n')
+  #   cat('br     :',br<-fit$par$br,'\n')
+  # }
+  # cat('\n\n')
+  
+  # Probability Interval for Birge's ratio
+  br = FitOCTLib::printBr(fit)
+}
+```
+
+As can be seen in Fig. \@ref(fig:plotGP1), the residuals have been
+notably improved from the mono-exponential model.
+
+```{r plotGP1, echo = FALSE, fig.height=7, fig.cap='Modulated-exponential fit, residuals, Modulation function and Normal QQ-plot of residuals.'}
+gPars$cex = 1
+gPars$plot_title = 'Modulated exp. fit'
+FitOCTLib::plotExpGP(
+  x, y, uy, ySpl, out=fitGP, modScale=modRange, gPars=gPars,
+  dataType = dataType, br = br
+)
+gPars$plot_title = ' '
+```
+
+
+## In-vivo signal
+
+```{r getData, echo = FALSE, cache = TRUE}
+dataDir = c("DataWl","Data1","DataSynth")[2]
+dataSet = (list.dirs(path=paste0('../',dataDir),full.names = FALSE)[-1])[4]
+
+D = read.csv(paste0('../',dataDir,'/',dataSet,'/Courbe.csv'))
+    C = FitOCTLib::selX(D[,1],D[,2],depthSel,subSample)
+    x = C$x; y = C$y
+```
+
+### Estimate noise
+
+A fit of the residuals of  smoothing splines provides the parameters for a model of the random noise.
+
+```{r estimNoise, echo = FALSE, results='hold'}
+### Estimate data uncertainty
+fits = FitOCTLib::estimateNoise(x, y, df = smooth_df)
+uy   = fits$uy      # Used by next stages
+ySpl = fits$ySmooth # Used by plotMonoExp
+
+cat('\n Noise fit parameters:\n')
+a = fits$theta
+for(i in 1:length(a))
+  cat(paste0('a_',i,' : '),signif(a[i],3),'\n')
+```
+
+The smoothing curve, residuals and noise model can be seen in Fig. \@ref(fig:plotNoise). In thsi example, the noise is homogeneous, 
+and the exponential model tends to a constant.
+
+```{r plotNoise, echo = FALSE, fig.cap='Splines smoothing and noise estimation'}
+gPars$plot_title = 'Noise estimation'
+FitOCTLib::plotNoise(x, y, uy, ySpl, gPars, dataType)
+gPars$plot_title = ''
+```
+
+### Mono-exponential fit
+
+A mono-exponential fit is attempted using the noise model.
+
+```{r fitMono, include =FALSE}
+fitm   = FitOCTLib::fitMonoExp(x, y, uy, dataType = dataType)
+theta0    = fitm$best.theta   # Used by next stage
+cor.theta = fitm$cor.theta
+```
+
+The Birge ratio analysis rejects this model
+
+```{r fitMonoOut, echo = FALSE, results='hold'}
+opt = theta0
+cat('\n MonoExp decay parameters:\n')
+for(i in 1:length(opt))
+  cat(paste0('b_',i,' : '),signif(opt[i],3),'\n')
+cat('\n\n')
+
+# Probability Interval for Birge's ratio
+br = FitOCTLib::printBr(fitm$fit)
+```
+
+It can be seen in Fig. \@ref(fig:plotMono) that the residuals present notable serial correlation.
+
+```{r plotMono, echo = FALSE, fig.cap='Mono-exponential fit and residuals.'}
+fit     = fitm$fit
+resid   = fit$par$resid
+mod     = fit$par$m
+gPars$plot_title = 'Mono-exponential fit'
+FitOCTLib::plotMonoExp(x, y, uy, ySpl, mod, resid,
+                       gPars, dataType, br)
+gPars$plot_title = ''
+```
+
+### Modulated-exponential fit
+
+Considering that the mono-exponential is deemed inadequate, the
+model with mean-depts modulation is fit to the data.
+The default parameters are used, notably with a number of control
+points $M=10$. 
+
+#### Prior sampling
+
+```{r priGP, include=FALSE, cache=TRUE, dependson='getData'}
+# Prior on exponential params
+priExp = FitOCTLib::estimateExpPrior(
+  x, uy, dataType, priorType,
+  out = fitm, ru_theta = ru_theta,
+  eps = 1e-3
+)
+
+# Posterior Distribution
+priGP = FitOCTLib::fitExpGP(
+  x, y, uy,
+  dataType      = dataType,
+  Nn            = Nn,
+  gridType      = gridType,
+  method        = method,
+  theta0        = priExp$theta0,
+  Sigma0        = priExp$Sigma0,
+  lambda_rate   = lambda_rate,
+  rho_scale     = ifelse(rho_scale==0, 1./Nn, rho_scale),
+  nb_warmup     = nb_warmup,
+  nb_iter       = nb_warmup + nb_sample,
+  prior_PD      = 1,
+  open_progress = FALSE
+)
+```
+
+
+The moments-matching prior is used for the exponential parameters,
+and one can check the dispersion of the exponential curves generated 
+from this prior (prior predictive sampling) in Fig. \@ref(fig:plotPriGP).
+Prior probability intervals for the control values are also shown in
+this figure (right panel).
+
+```{r plotPriGP, echo = FALSE, fig.cap='Samples from prior pdf.'}
+gPars$plot_title = 'Prior exponential'
+FitOCTLib::plotExpGP(
+  x, y, uy, ySpl, out=priGP, modScale=modRange*4, gPars=gPars,
+  dataType = dataType, br = br
+)
+gPars$plot_title = ' '
+```
+
+#### Posterior sampling
+
+The priors pdf seems correct, and one can now draw samples from 
+the posterior pdf.
+
+```{r fitGP, include=FALSE, cache=TRUE, dependson='getData'}
+# Posterior Distribution
+fitGP = FitOCTLib::fitExpGP(
+  x, y, uy,
+  dataType      = dataType,
+  Nn            = Nn,
+  gridType      = gridType,
+  method        = method,
+  theta0        = priExp$theta0,
+  Sigma0        = priExp$Sigma0,
+  lambda_rate   = lambda_rate,
+  rho_scale     = ifelse(rho_scale==0, 1./Nn, rho_scale),
+  nb_warmup     = nb_warmup,
+  nb_iter       = nb_warmup + nb_sample,
+  prior_PD      = 0,
+  open_progress = FALSE
+)
+```
+
+The Birge ratio analysis invalidates this model.
+
+```{r fitGPOut, echo = FALSE, results ='hold', message= FALSE}
+if(fitGP$prior_PD == 0) {
+  # cat('\n ExpGP parameters:\n')
+  fit = fitGP$fit
+  # if(fitGP$method == 'sample' | fitGP$method == 'vb') {
+  #   pars = c('theta','yGP','lambda','sigma','br')
+  #   print(fit,pars=pars)
+  #   br = mean(rstan::extract(fit,'br')[[1]])
+  # } else {
+  #   cat('theta  :',fit$par$theta,'\n')
+  #   cat('yGP    :',fit$par$yGP,'\n')
+  #   cat('lambda :',fit$par$lambda,'\n')
+  #   cat('sigma  :',fit$par$sigma,'\n')
+  #   cat('br     :',br<-fit$par$br,'\n')
+  # }
+  # cat('\n\n')
+  
+  # Probability Interval for Birge's ratio
+  br = FitOCTLib::printBr(fit)
+}
+```
+
+As can be seen in Fig. \@ref(fig:plotGP), the residuals have not been
+notably improved from the mono-exponential model, and the present design
+does not enable to fit a sharp rise in the OCT signal at a depth of about
+$400\, \mu\rm{m}$. An option is to increase the number of control points.
+
+```{r plotGP, echo = FALSE, fig.height=7, fig.cap='Modulated-exponential fit, residuals, Modulation function and Normal QQ-plot of residuals.'}
+gPars$cex = 1
+gPars$plot_title = 'Modulated exp. fit'
+FitOCTLib::plotExpGP(
+  x, y, uy, ySpl, out=fitGP, modScale=modRange, gPars=gPars,
+  dataType = dataType, br = br
+)
+gPars$plot_title = ' '
+```
+
+### Add control points
+
+```{r include=FALSE}
+Nn = 15
+gridType='extremal'
+```
+
+
+```{r fitGP2, include=FALSE, cache=TRUE, dependson='getData'}
+# Posterior Distribution
+fitGP2 = FitOCTLib::fitExpGP(
+  x, y, uy,
+  dataType      = dataType,
+  Nn            = Nn,
+  gridType      = gridType,
+  method        = method,
+  theta0        = priExp$theta0,
+  Sigma0        = priExp$Sigma0,
+  lambda_rate   = lambda_rate,
+  rho_scale     = ifelse(rho_scale==0, 1./Nn, rho_scale),
+  nb_warmup     = nb_warmup,
+  nb_iter       = nb_warmup + nb_sample,
+  prior_PD      = 0,
+  open_progress = FALSE
+)
+```
+
+The number of control points has been raised to _M_=`r Nn` 
+on a grid covering the extremities of the depts range, 
+and the posterior distribution has been resampled. 
+
+```{r fitGPOut2, echo = FALSE, results ='hold', message= FALSE}
+if(fitGP2$prior_PD == 0) {
+  cat('\n ExpGP parameters:\n')
+  fit = fitGP2$fit
+  pars = c('theta','yGP','lambda','sigma','br')
+  print(fit,pars=pars)
+  cat('\n\n')
+  # Probability Interval for Birge's ratio
+  br = FitOCTLib::printBr(fit)
+}
+```
+
+The Birge ratio is now acceptable, although there are only 3 
+active control points. 
+The others do not contribute significantly to the fit.
+The residuals are also improved (Fig. \@ref(fig:plotGP2)).
+The model is statistically valid, and the modulation curve can be used 
+for physical interpretation.
+
+```{r plotGP2, echo = FALSE, fig.height=7, fig.cap='Modulated-exponential fit, residuals, Modulation function and Normal QQ-plot of residuals.'}
+gPars$cex = 1
+gPars$plot_title = 'Modulated exp. fit'
+FitOCTLib::plotExpGP(
+  x, y, uy, ySpl, out=fitGP2, modScale=modRange, gPars=gPars,
+  dataType = dataType, br = br
+)
+gPars$plot_title = ' '
+```
+
+
+
+
+
+# References
+
