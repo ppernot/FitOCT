@@ -25,6 +25,7 @@ gPars = list(
   tcl     = -0.5,
   lwd     = 6,
   cex     = 3.5,
+  cex.leg = 0.8,
   xlabel  = 'stromal depth (µm)',
   plot_title = '',
   graphTable = TRUE
