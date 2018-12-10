@@ -74,20 +74,31 @@ for (n in names(ctrlPars))
 
 # Introduction
 
-Analysis of  OCT signals by a mono-exponential decay reveals two
-features which condition the proposed data analysis method:
-an heterogeneous random noise (Poisson-like; see Fig. \@ref(fig:plotNoise1)),
-and medium-scale oscillations around the exponential decay 
-(model inadequacy; see Fig. \@ref(fig:plotMono1)). 
+Analysis of OCT signals by a mono-exponential decay typically 
+reveals two features which condition the data analysis method 
+proposed here:
+
+* an heterogeneous, Poisson-like, random noise(Fig. \@ref(fig:plotNoise1))
+* medium-scale oscillations around the exponential decay, revealing
+model inadequacy (Fig. \@ref(fig:plotMono1)).  
+
 To be able to partition unambiguously the model residuals 
 between these two components, we proceed in two steps:
 
-1. estimation and modeling of the random noise component, to be injected in 
+1. estimation and modeling of the random noise component 
+2. estimation of the parameters of the decay model. 
+Knowing the noise enables to (in-)validate a mono-exponential
+decay model
+    a. test of a simple mono-exponential decay model
+    b. if invalid, use a modulated decay model
 
-2. the estimation of the parameters of the decay model:
-    a. test of a simple monoexponential model
-    b. if the latter fails, use of a modulated decay model
+The latter model fits the deviations of the signal from
+an ideal mono-exponential.
 
+The next sections present the statistical aspects of this 
+procedure in a Bayesian framework. Please see Refs. 
+[@Gregory2005;@Sivia06;@Gelman2013;@McElreath2015]
+for an introduction to Bayesian data analysis.
 
 ```{r getData1, echo = FALSE, cache = TRUE}
 dataDir = c("DataWl","Data1","DataSynth")[2]
@@ -141,8 +152,8 @@ where $f(.)$ is a model function to be defined, and
   \epsilon_i \sim Norm(0,\sigma_i) 
 (\#eq:2)
 \end{equation}
-represents an heterogeneous measurement noise with a normal distribution
-of standard deviation $\sigma_i$.
+represents a measurement noise with a normal distribution of mean zero 
+and standard deviation $\sigma_i$.
 
 ## Estimation and modeling of the random noise
 
@@ -191,7 +202,8 @@ $\pmb \vartheta = \{ a,b,l_0 \}$
 (\#eq:modExp)
 \end{equation}  
 is fitted to the data by maximization of the posterior pdf (MAP).
-The likelihood is
+In absence of correlation, the likelihood is a product of univariate 
+normal distributions 
 \begin{equation}
   \pmb y| \pmb \vartheta \sim 
       \prod_{i=1}^N {\rm N}(f(z_i; \pmb \vartheta ),u_{yi})
@@ -209,13 +221,15 @@ One defines the a weighted chi-square function as
            {u_{yi}^2}
 (\#eq:wChi2)
 \end{equation}
-The value of the reduced chi-square $\chi_r^2 = \chi_w^2/(N-3)$ should be 
-close to 1 ($\chi_r^2 \in IQ_{95}$), based on the quantiles of the reduced
-chi-square distribution with $N-3$ degrees of freedom. 
-Moreover, the residuals should not present serial correlation. 
-If these conditions are not met, one has to use the more elaborate 
-model, described below.
+The value of the Birge's ratio $R_B$ or reduced chi-square 
+$\chi_r^2 = \chi_w^2/(N-3)$ should be close to 1 ($\chi_r^2 \in IQ_{95}$), 
+based on the quantiles of the reduced chi-square distribution 
+with $N-3$ degrees of freedom. 
 
+Moreover, the residuals should not present serial correlation. 
+If both conditions are not met, the mono-exponential decay is
+inadequate, and one has to use the more elaborate model 
+described next.
 
 ### Modulated decay model
 
@@ -243,7 +257,6 @@ smoothness properties
 C(z, z') = \alpha^2 * \exp\left( -\frac{(z-z')^2}{\rho^2} \right)
 (\#eq:7)
 \end{equation}
-The $\alpha$ and $\rho$ parameters of the GP are fixed *a priori*.
 
 Considering the set of $M$ control values $\pmb \kappa$ for the OD 
 modulation at locations $\hat{\pmb z}$, $\delta l$ can be obtained 
@@ -304,11 +317,11 @@ priGP = FitOCTLib::fitExpGP(
 ```
 
 $\pmb\kappa$. The definition of the modulation function is a source
-of indetermination between $l_0$ and $\pmb \kappa$; 
-for instance, setting all values of $\pmb \kappa$ to 1 would be 
+of indetermination between $l_0$ and $\pmb\kappa$; 
+for instance, setting all values of $\pmb\kappa$ to 1 would be 
 exactly compensated by halving $l_0$.
-One therefore constrains $\pmb \kappa$ to be close to zero
-with a Bayesian Lasso-type prior [@Park2008], in a version 
+One therefore constrains $\pmb\kappa$ to be close to zero
+using a Bayesian Lasso-type prior [@Park2008], in a version 
 based on a hierarchical prior adapted from Ref.[@Mallick2014]:
 \begin{equation}
   \begin{split}
@@ -319,8 +332,7 @@ based on a hierarchical prior adapted from Ref.[@Mallick2014]:
 (\#eq:9)
 \end{equation}
 where $\lambda_r$ is chosen _a priori_; it defines the scale of 
-expected deviations from zero of $\pmb\kappa$ 
-(typically $\lambda_r=0.1$). 
+expected deviations from zero of $\pmb\kappa$ (typically $\lambda_r=0.1$). 
 An example is shown in Fig. \@ref(fig:plotPriKappa).
 
 ```{r plotPriKappa, echo = FALSE, warning = FALSE, fig.cap='Log-prior pdf of a $\\kappa$ parameter.'}
@@ -341,19 +353,18 @@ $\pmb\vartheta$. The prior on $\pmb \vartheta$ is a multivariate
 normal distribution
 $\pi(\pmb\vartheta) = N(\hat{\pmb \vartheta}_1,\pmb \Sigma_\vartheta)$
 centered on the best estimate from the mono-exponential fit, 
-$\hat{\pmb \vartheta}_1$, with a covariance matrix 
-$\pmb\Sigma_\vartheta$. 
+$\hat{\pmb \vartheta}_1$, with a covariance matrix $\pmb\Sigma_\vartheta$. 
 Because the present model is used when the mono-exponential decay
 is inadequate, one cannot rely directly on the covariance matrix
 extracted from its calibration, $\pmb\Sigma_{\vartheta_1}$.
-Instead, a covariance matrix is estimated to cover the range
-of variations of the mono-exponential residuals [@Pernot2017b], 
-following two approaches:
+Instead, a covariance matrix is designed to enable  decays covering
+the range of variations of the mono-exponential residuals [@Pernot2017b]. 
+Two approaches have been implemented:
 
 1. the covariance matrix is built from the correlation matrix
-   $\pmb C_{\vartheta_1}$ issued from the monoexponential fit, and a 
-   vector of standard deviations specified from relative 
-   uncertainties on the parameters:
+   $\pmb C_{\vartheta_1}$ issued from the monoexponential fit, 
+   and a vector of standard deviations specified by a relative 
+   uncertainty on the parameters:
    \begin{equation}
       \pmb \Sigma_\vartheta = \pmb I(\pmb u_\vartheta) 
                        * \pmb C_{\vartheta_1} 
@@ -365,26 +376,30 @@ following two approaches:
    The uncertainty factor $r$ is typically chosen as a small percentage,
    _e.g._, $r = 0.05$.
    
-2. a _diagonal_ covariance matrix 
-   $\pmb\Sigma_\vartheta = \pmb I(\pmb u_\vartheta^2)$
-   is built by a moments-matching procedure.
-   The standard deviations $\pmb u_\vartheta$ are optimized to 
-   match two criteria:  
+2.  a _diagonal_ covariance matrix 
+    $\pmb\Sigma_\vartheta = \pmb I(\pmb u_\vartheta^2)$
+    is built by a moments-matching procedure. 
+    The standard deviations $\pmb u_\vartheta$ are optimized to 
+    match two criteria^[Premiminary tests have shown that the correlation 
+    parameters are not well identified by this type of approach, and 
+    that they do not enable a notable improvement of the fit. It is 
+    therefore much simpler to deal with a diagonal matrix]:  
     a. $S_1$, the 2-sigma prediction uncertainty of the mono-exponential
        model has to match $Q_{95}$, the $95^{th}$ quantile of the absolute 
        errors of the mono-exponential model (all statistics are weighted 
        by $\pmb u_y$) [@Pernot2018];   
     b. the standard deviation of the prediction uncertainty has to 
-       be as small as possible.   
+       be as small as possible.
+       
     The first criterion ensures that the mean prediction uncertainty of
     the mono-exponential model is in agreement with the amplitude of
     the model's residuals [@Pernot2017b]. 
-    This criterion can typically be matched by 
-    an infinity of solutions, and the second one selects those parameters
-    which provides the 'flatest' prediction band. 
+    This criterion can typically be matched by an infinity of solutions, 
+    and the second one selects those parameters which provides the 
+    'flatest' prediction band. 
     The optimization is done by sampling the posterior pdf of the
     parameters  $\pmb u_\vartheta$ with uniform priors on $[0,\infty[$,
-    and a likelihood function
+    and a bivariate normal likelihood function
     \begin{equation}
       \left\{Q_{95} ,0\right\} | \pmb u_\vartheta \sim
          {\rm N_2}(\left\{S_1(u_\vartheta) ,S_2(u_\vartheta)\right\},
@@ -456,7 +471,8 @@ $\lambda_r$ and $\sigma$.
 
 #### Likelihood function
 
-The likelihood function is the product of univariate normal distributions
+As for the mono-exponential decay model, the likelihood function 
+is the product of univariate normal distributions
 \begin{equation}
   \pmb y| \pmb \vartheta, \pmb \kappa , \sigma,  \sim 
       \prod_{i=1}^N {\rm N}(f(z_i; \pmb \vartheta, \pmb \kappa ),
