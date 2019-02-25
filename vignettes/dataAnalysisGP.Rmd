@@ -3,17 +3,18 @@ title: Analysis of OCT decays
 author: Pascal PERNOT
 date: "`r Sys.Date()`"
 output:
-  bookdown::pdf_document2
+  bookdown::pdf_book:
+    keep_tex: no
 citecolor: blue
 linkcolor: blue
 linestretch: 1.1
 fontsize: 12pt
-bibliography: /home/pernot/Bureau/ComputChemUnc/biblio.bib
+bibliography: biblioOCT.bib
 csl: journal-of-signal-processing-systems.csl
 ---
 
 ```{r setup, echo = FALSE, include=FALSE, message=FALSE}
-libs =c('parallel','rstan','inlmisc','FitOCTLib')
+libs =c('parallel','rstan','inlmisc','FitOCTLib','FNN')
 
 for (lib in libs ) {
   if(!require(lib,character.only = TRUE))
@@ -213,7 +214,7 @@ The parameters have uniform priors on $[0,\infty[$.
 
 #### Validation
 
-One defines the a weighted chi-square function as
+One defines a weighted chi-square function as
 \begin{equation}
   \chi_w^2(\pmb y; \pmb z, \pmb u_y, \pmb \vartheta) = 
     \sum_{i=1}^N 
@@ -510,7 +511,7 @@ __Basic algorithm__
 
 2. Mono-exponential fit: `fit1 <- fitMonoExp(x, y, en$uy)`.
    Validity is checked by function `br <- printBr(fit1)`.
-   If `is.null(br$alert)`, the model is OK, on can stop.
+   If `is.null(br$alert)`, the model is OK, one can stop.
 
 3. Modulated exponential fit: `fit2 <- fitExpGP(x, y, en$uy)`.
    If the fit is not valid (`!is.null(printBr(fit2)$alert)`)),
