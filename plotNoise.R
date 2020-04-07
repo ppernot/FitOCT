@@ -12,6 +12,6 @@ tagOut  = paste0('Results/',tag,'_EstimateNoise')
 png(filename = paste0(tagOut,'_results.png'),
     width=2000, height=1000)
 gPars$plot_title = 'Noise estimation'
-FitOCTLib::plotNoise(x, y, uy, ySpl, gPars, dataType)
+SNR = FitOCTLib::plotNoise(x, y, uy, ySpl, gPars, dataType)
 gPars$plot_title = ''
 dev.off()

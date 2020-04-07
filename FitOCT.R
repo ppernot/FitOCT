@@ -1,16 +1,23 @@
 rm(list = ls()); gc() # Clean environment
 
 # Libraries ####
-libs =c('parallel','rstan','inlmisc','FitOCTLib')
-
+libs =c('parallel','rstan','inlmisc','FNN')
 for (lib in libs ) {
   if(!require(lib,character.only = TRUE))
     install.packages(lib,dependencies=TRUE)
   library(lib,character.only = TRUE)
 }
+lib ='FitOCTLib'
+if(!require(lib,character.only = TRUE))
+  devtools::install_github("ppernot/FitOCTlib")
+library(lib,character.only = TRUE)
 
 # Options ####
-options(mc.cores = parallel::detectCores(), width = 90)
+options(
+  mc.cores = parallel::detectCores(),
+  width = 90,
+  stringsAsFactors = FALSE
+)
 rstan_options(auto_write = TRUE)
 set.seed(1234) # Initialise la graine du RNG
 
@@ -63,19 +70,41 @@ if (file.exists(ctrlFile)) {
 }
 cat('Configuration Parameters\n')
 cat('------------------------\n')
-str(ctrlPars,give.head=FALSE, give.length=FALSE)
+str(ctrlPars, give.head=FALSE, give.length=FALSE)
 
 # Expose parameters
 for (n in names(ctrlPars))
   assign(n,rlist::list.extract(ctrlPars,n))
 
+
+
 # RUN ####
-dataDirs = c("DataWl","Data1","DataSynth")[2]
+dataDirs = c("DataWl","Data1","DataSynth")[3]
 for (dataDir in dataDirs) {
 
   dataSets = list.dirs(path=dataDir,full.names = FALSE)[-1]
 
-  for(dataSet in dataSets[4]) {
+  # Results table: one table per dataDir
+  resultsTable = data.frame(
+    date = NA,
+    tag = NA,
+    SNR = NA,
+    Mono_br = NA,
+    Mono_brCI95 = NA,
+    Mono_alert = NA,
+    GP_br = NA,
+    GP_brCI95 = NA,
+    GP_alert = NA,
+    C0 = NA,
+    uC0 = NA,
+    A0 = NA,
+    uA0 = NA,
+    Ls = NA,
+    uLs = NA,
+    eta = NA
+  )
+
+  for(dataSet in dataSets) {
 
     tag = paste0(dataDir,'_',dataSet)
     cat(tag,'------------------------','\n')
@@ -84,20 +113,59 @@ for (dataDir in dataDirs) {
     D = read.csv(paste0(dataDir,'/',dataSet,'/Courbe.csv'))
     C = FitOCTLib::selX(D[,1],D[,2],depthSel,subSample)
     x = C$x; y = C$y
+    depth = max(x)-min(x)
 
     ### Estimate data uncertainty
     fits = FitOCTLib::estimateNoise(x, y, df = smooth_df)
-    uy   = fits$uy      # Used by next stages
-    ySpl = fits$ySmooth # Used by plotMonoExp
-    source ("./plotNoise.R")
+    uy   = fits$uy           # Used by next stages
+    ySpl = fits$ySmooth      # Used by plotMonoExp
+    source ("./plotNoise.R") # Side effect: provides SNR
 
     ### MAP Inference of exponential decay parameters
     fitm   = FitOCTLib::fitMonoExp(x, y, uy, dataType = dataType)
     theta0    = fitm$best.theta   # Used by next stage
     cor.theta = fitm$cor.theta
+    unc.theta = fitm$unc.theta
     source ("./plotMonoExp.R")
+    mono_br = br
 
-    if(is.null(br$alert)) break # Monoexp fit OK, no need to try fitExpGP
+    if(is.null(br$alert)) {
+      # Monoexp fit OK
+      resultsTable = rbind(
+        resultsTable,
+        data.frame(
+          date = date(),
+          tag = tag,
+          SNR = signif(SNR$SNR,3),
+          Mono_br = signif(br$br,3),
+          Mono_brCI95 = paste0(signif(br$CI95[1],3),'-',
+                          signif(br$CI95[2],3)),
+          Mono_alert = "Mono OK",
+          GP_br = NA,
+          GP_brCI95 = NA,
+          GP_alert = NA,
+          C0  = signif(theta0[1],4),
+          uC0 = signif(unc.theta[1],2),
+          A0  = signif(theta0[2],4),
+          uA0 = signif(unc.theta[2],2),
+          Ls  = signif(theta0[3],4),
+          uLs = signif(unc.theta[3],2),
+          eta = signif(theta0[3]/depth,4)
+        )
+      )
+      df = cbind(
+        x = x,
+        y = y,
+        uy = uy,
+        mExp = fitm$fit$par$m
+      )
+      write.csv(
+        df,
+        file = paste0('Results/',tag,'_Curves.csv'),
+        row.names = FALSE
+      )
+      next # No need to try fitExpGP
+    }
 
     ### Prior
     priExp = FitOCTLib::estimateExpPrior(
@@ -129,5 +197,52 @@ for (dataDir in dataDirs) {
     if(priPost & fitGP$method != 'optim')
        source("./priPost.R")
 
+    source("./outExpGP.R")
+    params = outExpGP(x, y, uy, out = fitGP)
+
+    resultsTable = rbind(
+      resultsTable,
+      data.frame(
+        date = date(),
+        tag = tag,
+        SNR = signif(SNR$SNR,3),
+        Mono_br = signif(mono_br$br,3),
+        Mono_brCI95 = paste0(signif(mono_br$CI95[1],3),'-',
+                        signif(mono_br$CI95[2],3)),
+        Mono_alert = "Mono PB !",
+        GP_br = signif(br$br,3),
+        GP_brCI95 = paste0(signif(br$CI95[1],3),'-',
+                             signif(br$CI95[2],3)),
+        GP_alert = ifelse(is.null(br$alert),"GP OK","GP PB !"),
+        C0  = signif(params$sum[1,1],4),
+        uC0 = signif(params$sum[1,2],2),
+        A0  = signif(params$sum[2,1],4),
+        uA0 = signif(params$sum[2,2],2),
+        Ls  = signif(params$sum[3,1],4),
+        uLs = signif(params$sum[3,2],2),
+        eta = signif(params$sum[3,1]/depth,4)
+      )
+    )
+    df = cbind(
+      x = x,
+      y = y,
+      uy = uy,
+      mExp = params$mExp,
+      mGP  = params$mod,
+      dL   = params$dL
+    )
+    write.csv(
+      df,
+      file = paste0('Results/',tag,'_Curves.csv'),
+      row.names = FALSE
+    )
   }
+
+  # Save results table
+  write.csv(
+    resultsTable[-1,], # Remove first empty line
+    file = paste0('Results/',dataDir,'_resultsTable.csv'),
+    append = TRUE
+  )
 }
+

@@ -52,7 +52,7 @@ dev.off()
 png(filename = paste0(tagOut,'_results.png'),
     width=2000, height=1000*(2-prior_PD))
 gPars$plot_title = 'Modulated exp. fit'
-FitOCTLib::plotExpGP(
+sum = FitOCTLib::plotExpGP(
   x, y, uy, ySpl, out=fitOut, modScale=modRange, gPars=gPars,
   dataType = dataType, br = br
 )
